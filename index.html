@@ -29,27 +29,33 @@ a{color:#ff9bb0;overflow-wrap:anywhere}
 <p>Wayback Machine に保存された過去ページのソースを読み、
 <b>https://cdn から始まり .mp3 または .wav で終わるURL</b>を探してコピーできます。</p>
 
-<input id="url" type="url" placeholder="https://piapro.jp/t/..." />
-
-<div class="opts">
-  <label><input type="radio" name="ext" value="mp3" checked> mp3</label>
-  <label><input type="radio" name="ext" value="wav"> wav</label>
-  <label><input type="radio" name="ext" value="both"> 両方</label>
+<div class="panel">
+  <h2>① 元のURLを入れてカレンダーを開く</h2>
+  <input id="url" type="url" placeholder="https://piapro.jp/t/..." oninput="onUrlInput()" />
+  <div id="links"><p>URLを入力すると、カレンダーへのリンクが出ます。</p></div>
 </div>
-
-<select id="limit">
-  <option value="10">調べる保存履歴: 最大10件</option>
-  <option value="30" selected>調べる保存履歴: 最大30件</option>
-  <option value="60">調べる保存履歴: 最大60件</option>
-</select>
-
-<button id="go" onclick="searchArchive()">保存履歴のソースを調べる</button>
-<button id="stop" class="sub" onclick="stopFlag=true" hidden>中止</button>
 
 <div class="panel">
-  <h2>保存履歴を見るリンク</h2>
-  <div id="links"><p>URLを入力して調べると、カレンダー表示へのリンクも出ます。</p></div>
+  <h2>② 選んだ日のURLを貼る（自動で調べます）</h2>
+  <p>カレンダーで日付を選んで開いたページのアドレス（https://web.archive.org/web/日付/…）を貼り付けると、自動でソースを読み込んで探します。</p>
+  <div class="opts">
+    <label><input type="radio" name="ext" value="mp3" checked> mp3</label>
+    <label><input type="radio" name="ext" value="wav"> wav</label>
+    <label><input type="radio" name="ext" value="both"> 両方</label>
+  </div>
+  <input id="snap" type="url" placeholder="https://web.archive.org/web/2012.../https://piapro.jp/t/..." />
 </div>
+
+<details class="panel">
+  <summary>まとめて自動で調べる（保存履歴を順番にすべて読む）</summary>
+  <select id="limit">
+    <option value="10">調べる保存履歴: 最大10件</option>
+    <option value="30" selected>調べる保存履歴: 最大30件</option>
+    <option value="60">調べる保存履歴: 最大60件</option>
+  </select>
+  <button id="go" onclick="searchArchive()">保存履歴をまとめて調べる</button>
+  <button id="stop" class="sub" onclick="stopFlag=true" hidden>中止</button>
+</details>
 
 <div class="panel">
   <h2>うまく自動取得できないとき（ソース貼り付け）</h2>
@@ -61,6 +67,10 @@ a{color:#ff9bb0;overflow-wrap:anywhere}
 <div id="results" class="panel" hidden>
   <h2>結果</h2>
   <div id="status" class="status"></div>
+  <details id="srcBox" hidden>
+    <summary>取得したソースを表示</summary>
+    <textarea id="srcView" readonly style="height:220px"></textarea>
+  </details>
   <button id="copyAll" class="sub" onclick="copyAll()" hidden>見つかったURLをすべてコピー</button>
   <div id="list"></div>
 </div>
@@ -202,6 +212,78 @@ async function searchArchive(){
     go.disabled=false;stop.hidden=true;
   }
 }
+
+// ===== 選んだ日のURLを貼ったら自動で読み込む =====
+let lastSource='', snapTimer=null;
+
+function onUrlInput(){
+  const raw=document.getElementById('url').value.trim();
+  try{
+    const u=new URL(raw);
+    if(u.protocol==='http:'||u.protocol==='https:')showLinks(u.href);
+  }catch(e){}
+}
+
+function parseSnapshot(raw){
+  if(/web\.archive\.org\/web\/\*/i.test(raw))return {error:'これはカレンダーのURLです。日付を選んで開いたあとのアドレスを貼ってください。'};
+  const m=raw.match(/web\.archive\.org\/web\/(\d+)[a-z_]*\/(.+)$/i);
+  let ts,orig;
+  if(m){ts=m[1];orig=m[2];}
+  else{
+    try{const u=new URL(raw);if(u.protocol!=='http:'&&u.protocol!=='https:')throw 0;}
+    catch(e){return {error:'URLの形式が正しくありません。'};}
+    ts='2';orig=raw; // 普通のURLなら最新の保存分を読む
+  }
+  orig=orig.replace(/^(https?):\/(?!\/)/i,'$1://');
+  return {ts,orig};
+}
+
+function showSource(text){
+  const box=document.getElementById('srcBox');
+  const MAX=300000;
+  document.getElementById('srcView').value=text.length>MAX
+    ?text.slice(0,MAX)+'\n\n...（長いため '+MAX+' 文字までを表示。抽出は全体に対して行っています）':text;
+  box.hidden=false;
+}
+
+async function autoSnapshot(){
+  const raw=document.getElementById('snap').value.trim();
+  if(!raw)return;
+  const info=parseSnapshot(raw);
+  document.getElementById('results').hidden=false;
+  found.clear();render();
+  document.getElementById('srcBox').hidden=true;
+  if(info.error){setStatus(info.error);return;}
+  setStatus('ソースを読み込み中...');
+  try{
+    const r=await fetch('https://web.archive.org/web/'+info.ts+'id_/'+info.orig);
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    lastSource=await r.text();
+    showSource(lastSource);
+    applyExtract('ソースを読み込みました（'+lastSource.length+' 文字）。');
+  }catch(e){
+    lastSource='';
+    setStatus('自動取得に失敗しました（保存されていない、またはブラウザの通信制限の可能性があります）。\n下の「ソース貼り付け」を使ってください。\n詳細: '+e.message);
+  }
+}
+
+function applyExtract(prefix){
+  const ext=getExt();
+  found.clear();
+  extractUrls(lastSource,ext).forEach(u=>found.set(u,''));
+  setStatus(prefix+'\n'+(found.size
+    ?found.size+' 件見つかりました。'
+    :'条件（https://cdn〜 .'+(ext==='both'?'mp3/.wav':ext)+'）に合うURLは見つかりませんでした。'));
+  render();
+}
+
+document.getElementById('snap').addEventListener('input',()=>{
+  clearTimeout(snapTimer);
+  snapTimer=setTimeout(autoSnapshot,500);
+});
+document.querySelectorAll('input[name=ext]').forEach(r=>r.addEventListener('change',()=>{
+  if(lastSource)applyExtract('検索条件を変更しました。');
+}));
 </script>
 </body>
 </html>
