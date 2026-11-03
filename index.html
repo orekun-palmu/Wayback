@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ピアプロ・アーカイブ検索</title>
+<title>ピアプロアーカイブ検索</title>
 <style>
 body{font-family:-apple-system,"Hiragino Sans","Yu Gothic",sans-serif;background:#151515;color:#f5f5f5;padding:20px;max-width:680px;margin:auto}
 h1{font-size:23px}
@@ -25,18 +25,18 @@ a{color:#ff9bb0;overflow-wrap:anywhere}
 </style>
 </head>
 <body>
-<h1>ピアプロ・アーカイブ検索</h1>
+<h1>ピアプロアーカイブ検索</h1>
 <p>Wayback Machine に保存された過去ページのソースを読み、
-<b>https://cdn から始まり .mp3 または .wav で終わるURL</b>を探してコピーできます。自動取得には第三者のCORS中継サービスを利用します。公開アーカイブのページ取得に限って使用してください。</p>
+<b> 音源のある元URL</b>を探してコピーできます。</p>
 
 <div class="panel">
-  <h2>① 元のURLを入れてカレンダーを開く</h2>
+  <h2>① piaproのinst配布URLを入れてカレンダーを開く</h2>
   <input id="url" type="url" placeholder="https://piapro.jp/t/..." oninput="onUrlInput()" />
   <div id="links"><p>URLを入力すると、カレンダーへのリンクが出ます。</p></div>
 </div>
 
 <div class="panel">
-  <h2>② 選んだ日のURLを貼る（自動で調べます）</h2>
+  <h2>② 選んだ日のURLを貼る</h2>
   <p>カレンダーで日付を選んで開いたページのアドレス（https://web.archive.org/web/日付/…）を貼り付けると、自動でソースを読み込んで探します。</p>
   <div class="opts">
     <label><input type="radio" name="ext" value="mp3" checked> mp3</label>
