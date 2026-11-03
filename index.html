@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ピアプロ・アーカイブ検索</title>
+<style>
+body{font-family:-apple-system,"Hiragino Sans","Yu Gothic",sans-serif;background:#151515;color:#f5f5f5;padding:20px;max-width:680px;margin:auto}
+h1{font-size:23px}
+h2{font-size:17px;margin:0 0 6px}
+p{line-height:1.7;color:#ccc}
+input[type=url],textarea,button,select{box-sizing:border-box;width:100%;padding:14px;margin:7px 0;border-radius:9px;font-size:16px}
+input[type=url],textarea,select{background:#252525;color:#fff;border:1px solid #555}
+textarea{height:120px;font-size:13px}
+button{background:#ff5577;color:#fff;border:0;font-weight:bold;cursor:pointer}
+button.sub{background:#444}
+button.small{width:auto;padding:6px 12px;margin:0 0 0 8px;font-size:13px}
+button:disabled{opacity:.5}
+a{color:#ff9bb0;overflow-wrap:anywhere}
+.panel{background:#222;padding:15px;border-radius:12px;margin-top:14px}
+.opts{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0}
+.opts label{color:#eee}
+.item{padding:9px 0;border-bottom:1px solid #333;font-size:13px;overflow-wrap:anywhere;color:#eee}
+.status{color:#ffc;font-size:14px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<h1>ピアプロ・アーカイブ検索</h1>
+<p>Wayback Machine に保存された過去ページのソースを読み、
+<b>https://cdn から始まり .mp3 または .wav で終わるURL</b>を探してコピーできます。</p>
+
+<input id="url" type="url" placeholder="https://piapro.jp/t/..." />
+
+<div class="opts">
+  <label><input type="radio" name="ext" value="mp3" checked> mp3</label>
+  <label><input type="radio" name="ext" value="wav"> wav</label>
+  <label><input type="radio" name="ext" value="both"> 両方</label>
+</div>
+
+<select id="limit">
+  <option value="10">調べる保存履歴: 最大10件</option>
+  <option value="30" selected>調べる保存履歴: 最大30件</option>
+  <option value="60">調べる保存履歴: 最大60件</option>
+</select>
+
+<button id="go" onclick="searchArchive()">保存履歴のソースを調べる</button>
+<button id="stop" class="sub" onclick="stopFlag=true" hidden>中止</button>
+
+<div class="panel">
+  <h2>保存履歴を見るリンク</h2>
+  <div id="links"><p>URLを入力して調べると、カレンダー表示へのリンクも出ます。</p></div>
+</div>
+
+<div class="panel">
+  <h2>うまく自動取得できないとき（ソース貼り付け）</h2>
+  <p>アーカイブのページで「ページのソースを表示」したものを貼り付けても抽出できます。</p>
+  <textarea id="src" placeholder="ここにHTMLソースを貼り付け"></textarea>
+  <button class="sub" onclick="extractFromPaste()">貼り付けたソースから抽出</button>
+</div>
+
+<div id="results" class="panel" hidden>
+  <h2>結果</h2>
+  <div id="status" class="status"></div>
+  <button id="copyAll" class="sub" onclick="copyAll()" hidden>見つかったURLをすべてコピー</button>
+  <div id="list"></div>
+</div>
+
+<script>
+let stopFlag=false;
+const found=new Map(); // url -> 最初に見つかった保存日時
+
+function getExt(){
+  return document.querySelector('input[name=ext]:checked').value;
+}
+
+// https://cdn で始まり、.mp3 / .wav で終わるURLだけを拾う
+function makeRegex(ext){
+  const e = ext==='both' ? '(?:mp3|wav)' : ext;
+  return new RegExp('https:\\/\\/cdn[^\\s"\'<>()\\\\]*?\\.'+e+'(?![\\w\\/.\\-])','gi');
+}
+
+function normalize(src){
+  return src
+    .replace(/\\u002F/gi,'/')
+    .replace(/\\\//g,'/')
+    .replace(/&amp;/g,'&');
+}
+
+function extractUrls(src,ext){
+  const text=normalize(src);
+  return [...new Set(text.match(makeRegex(ext))||[])];
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function render(){
+  const list=document.getElementById('list');
+  list.innerHTML='';
+  document.getElementById('copyAll').hidden = found.size===0;
+  found.forEach((ts,u)=>{
+    const d=document.createElement('div');
+    d.className='item';
+    const a=document.createElement('a');
+    a.href=u;a.target='_blank';a.rel='noopener noreferrer';
+    a.textContent=u;
+    d.appendChild(a);
+    const b=document.createElement('button');
+    b.className='small';b.textContent='コピー';
+    b.onclick=()=>copyText(u,b);
+    d.appendChild(b);
+    if(ts){
+      const s=document.createElement('div');
+      s.style.color='#999';
+      s.textContent='初めて見つかった保存日時: '+ts.slice(0,4)+'/'+ts.slice(4,6)+'/'+ts.slice(6,8);
+      d.appendChild(s);
+    }
+    list.appendChild(d);
+  });
+}
+
+async function copyText(t,btn){
+  try{
+    await navigator.clipboard.writeText(t);
+  }catch(e){
+    const ta=document.createElement('textarea');
+    ta.value=t;document.body.appendChild(ta);ta.select();
+    document.execCommand('copy');ta.remove();
+  }
+  if(btn){const o=btn.textContent;btn.textContent='コピーしました';setTimeout(()=>btn.textContent=o,1200);}
+}
+
+function copyAll(){
+  copyText([...found.keys()].join('\n'),document.getElementById('copyAll'));
+}
+
+function extractFromPaste(){
+  const src=document.getElementById('src').value;
+  document.getElementById('results').hidden=false;
+  found.clear();
+  extractUrls(src,getExt()).forEach(u=>found.set(u,''));
+  setStatus(found.size?found.size+' 件見つかりました。':'条件に合うURLは見つかりませんでした。');
+  render();
+}
+
+function showLinks(target){
+  const box=document.getElementById('links');
+  box.innerHTML='';
+  const add=(label,href)=>{
+    const p=document.createElement('p');
+    const a=document.createElement('a');
+    a.href=href;a.target='_blank';a.rel='noopener noreferrer';a.textContent=label;
+    p.appendChild(a);box.appendChild(p);
+  };
+  add('過去ページをカレンダーで見る','https://web.archive.org/web/*/'+target);
+}
+
+async function searchArchive(){
+  const raw=document.getElementById('url').value.trim();
+  if(!raw){alert('URLを入力してください');return;}
+  let u;
+  try{u=new URL(raw);}catch(e){alert('正しいURLを入力してください');return;}
+  if(u.protocol!=='https:'&&u.protocol!=='http:'){alert('HTTPまたはHTTPSのURLを入力してください');return;}
+
+  const target=u.href, ext=getExt();
+  const go=document.getElementById('go'), stop=document.getElementById('stop');
+  showLinks(target);
+  document.getElementById('results').hidden=false;
+  found.clear();render();
+  stopFlag=false;go.disabled=true;stop.hidden=false;
+
+  try{
+    setStatus('保存履歴の一覧を取得中...');
+    const api='https://web.archive.org/cdx/search/cdx?'+new URLSearchParams({
+      url:target,output:'json',fl:'timestamp,original,mimetype',
+      filter:'statuscode:200',collapse:'digest',
+      limit:document.getElementById('limit').value
+    });
+    const res=await fetch(api);
+    const body=(await res.text()).trim();
+    const rows=body?JSON.parse(body).slice(1):[];
+    if(!rows.length){setStatus('保存された履歴が見つかりませんでした。');return;}
+
+    for(let i=0;i<rows.length;i++){
+      if(stopFlag){setStatus('中止しました。見つかった '+found.size+' 件を表示しています。');return;}
+      const [ts,orig,mime]=rows[i];
+      setStatus('ソースを読み込み中 '+(i+1)+' / '+rows.length+'（'+ts.slice(0,8)+'）\n見つかったURL: '+found.size+' 件');
+      if(mime&&!/html|text|javascript|json|xml/.test(mime))continue;
+      try{
+        const r=await fetch('https://web.archive.org/web/'+ts+'id_/'+orig);
+        const text=await r.text();
+        extractUrls(text,ext).forEach(x=>{if(!found.has(x))found.set(x,ts);});
+        render();
+      }catch(e){/* このスナップショットだけ飛ばす */}
+      await new Promise(r=>setTimeout(r,1000)); // 相手サーバーへの配慮
+    }
+    setStatus(found.size
+      ?'完了：'+found.size+' 件見つかりました。'
+      :'完了：条件（https://cdn〜 .'+(ext==='both'?'mp3/.wav':ext)+'）に合うURLは見つかりませんでした。');
+  }catch(e){
+    setStatus('自動取得に失敗しました（ブラウザの通信制限の可能性があります）。\n下の「ソース貼り付け」を使ってください。\n詳細: '+e.message);
+  }finally{
+    go.disabled=false;stop.hidden=true;
+  }
+}
+</script>
+</body>
+</html>
