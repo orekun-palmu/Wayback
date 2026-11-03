@@ -27,7 +27,7 @@ a{color:#ff9bb0;overflow-wrap:anywhere}
 <body>
 <h1>ピアプロ・アーカイブ検索</h1>
 <p>Wayback Machine に保存された過去ページのソースを読み、
-<b>https://cdn から始まり .mp3 または .wav で終わるURL</b>を探してコピーできます。</p>
+<b>https://cdn から始まり .mp3 または .wav で終わるURL</b>を探してコピーできます。自動取得には第三者のCORS中継サービスを利用します。公開アーカイブのページ取得に限って使用してください。</p>
 
 <div class="panel">
   <h2>① 元のURLを入れてカレンダーを開く</h2>
@@ -43,7 +43,11 @@ a{color:#ff9bb0;overflow-wrap:anywhere}
     <label><input type="radio" name="ext" value="wav"> wav</label>
     <label><input type="radio" name="ext" value="both"> 両方</label>
   </div>
-  <input id="snap" type="url" placeholder="https://web.archive.org/web/2012.../https://piapro.jp/t/..." />
+  <input id="snap" type="url" placeholder="https://web.archive.org/web/20261009110138/https://piapro.jp/t/jF5P" />
+  <p>通常の閲覧URLを貼ると、元HTML取得用URL（id_付き）へ自動変換します。</p>
+  <input id="rawHtmlUrl" type="url" readonly placeholder="ここに元HTML取得用URLが表示されます" />
+  <button class="sub" onclick="copyRawHtmlUrl()">元HTML取得用URLをコピー</button>
+  <button id="loadSourceBtn" onclick="autoSnapshot(true)">元HTMLを取得する</button>
 </div>
 
 <details class="panel">
@@ -71,6 +75,8 @@ a{color:#ff9bb0;overflow-wrap:anywhere}
     <summary>取得したソースを表示</summary>
     <textarea id="srcView" readonly style="height:220px"></textarea>
   </details>
+  <button id="copySourceBtn" class="sub" onclick="copySource()" hidden>取得したソースを丸ごとコピー</button>
+  <button id="extractSourceBtn" onclick="extractLoadedSource()" hidden>取得したソースからMP3/WAVを抽出</button>
   <button id="copyAll" class="sub" onclick="copyAll()" hidden>見つかったURLをすべてコピー</button>
   <div id="list"></div>
 </div>
@@ -180,7 +186,7 @@ async function searchArchive(){
 
   try{
     setStatus('保存履歴の一覧を取得中...');
-    const api='https://web.archive.org/cdx/search/cdx?'+new URLSearchParams({
+    const api='https://proxy.cors.dev/https://web.archive.org/cdx/search/cdx?'+new URLSearchParams({
       url:target,output:'json',fl:'timestamp,original,mimetype',
       filter:'statuscode:200',collapse:'digest',
       limit:document.getElementById('limit').value
@@ -196,7 +202,7 @@ async function searchArchive(){
       setStatus('ソースを読み込み中 '+(i+1)+' / '+rows.length+'（'+ts.slice(0,8)+'）\n見つかったURL: '+found.size+' 件');
       if(mime&&!/html|text|javascript|json|xml/.test(mime))continue;
       try{
-        const r=await fetch('https://web.archive.org/web/'+ts+'id_/'+orig);
+        const r=await fetch('https://proxy.cors.dev/https://web.archive.org/web/'+ts+'id_/'+orig);
         const text=await r.text();
         extractUrls(text,ext).forEach(x=>{if(!found.has(x))found.set(x,ts);});
         render();
@@ -226,45 +232,113 @@ function onUrlInput(){
 
 function parseSnapshot(raw){
   if(/web\.archive\.org\/web\/\*/i.test(raw))return {error:'これはカレンダーのURLです。日付を選んで開いたあとのアドレスを貼ってください。'};
-  const m=raw.match(/web\.archive\.org\/web\/(\d+)[a-z_]*\/(.+)$/i);
-  let ts,orig;
-  if(m){ts=m[1];orig=m[2];}
-  else{
-    try{const u=new URL(raw);if(u.protocol!=='http:'&&u.protocol!=='https:')throw 0;}
-    catch(e){return {error:'URLの形式が正しくありません。'};}
-    ts='2';orig=raw; // 普通のURLなら最新の保存分を読む
+  let u;
+  try { u = new URL(raw); } catch(e) { return {error:'URLの形式が正しくありません。'}; }
+  if(u.protocol!=='http:' && u.protocol!=='https:') return {error:'HTTPまたはHTTPSのURLを入力してください。'};
+
+  // Waybackの通常閲覧URLからタイムスタンプと元URLを取り出す
+  const m = raw.match(/^https?:\/\/web\.archive\.org\/web\/(\d+)(?:[a-z_]+)?\/(https?:\/\/.*)$/i);
+  if(m){
+    const ts=m[1];
+    let orig=m[2];
+    // すでに id_ 付きでも重複させない
+    return {ts,orig,viewUrl:'https://web.archive.org/web/'+ts+'/'+orig,rawHtmlUrl:'https://web.archive.org/web/'+ts+'id_/'+orig};
   }
-  orig=orig.replace(/^(https?):\/(?!\/)/i,'$1://');
-  return {ts,orig};
+  // 元ページURLの場合はWaybackの最新保存分を要求する形式
+  if(u.hostname==='web.archive.org') return {error:'Wayback Machineの保存日時付きURLを貼ってください。カレンダーURLではなく、日付を選んだ後のURLが必要です。'};
+  return {error:'ピアプロのURLではなく、Wayback Machineで日付を選んだ後の閲覧URLを貼ってください。'};
+}
+
+function updateRawHtmlUrl(){
+  const raw=document.getElementById('snap').value.trim();
+  const out=document.getElementById('rawHtmlUrl');
+  if(!raw){out.value='';return;}
+  const info=parseSnapshot(raw);
+  out.value=info.error?'':info.rawHtmlUrl;
+}
+
+async function copyRawHtmlUrl(){
+  updateRawHtmlUrl();
+  const v=document.getElementById('rawHtmlUrl').value;
+  if(!v){setStatus('先に保存ページの閲覧URLを貼り付けてください。');document.getElementById('results').hidden=false;return;}
+  await copyText(v,document.querySelector('button[onclick="copyRawHtmlUrl()"]'));
+}
+
+async function copySource(){
+  const text = lastSource;
+  if(!text){setStatus('コピーできるソースがありません。まず「元HTMLを取得する」を押してください。');return;}
+  try{
+    await navigator.clipboard.writeText(text);
+    setStatus('ソースを丸ごとコピーしました（'+text.length+' 文字）。');
+  }catch(e){
+    const ta=document.createElement('textarea');
+    ta.value=text;
+    ta.style.position='fixed';ta.style.left='0';ta.style.top='0';ta.style.width='100%';ta.style.height='50vh';
+    document.body.appendChild(ta);ta.focus();ta.select();ta.setSelectionRange(0,ta.value.length);
+    const ok=document.execCommand('copy');
+    ta.remove();
+    setStatus(ok?'ソースを丸ごとコピーしました（'+text.length+' 文字）。':'自動コピーできませんでした。下のソース欄を長押しして全選択してください。');
+  }
 }
 
 function showSource(text){
-  const box=document.getElementById('srcBox');
-  const MAX=300000;
-  document.getElementById('srcView').value=text.length>MAX
-    ?text.slice(0,MAX)+'\n\n...（長いため '+MAX+' 文字までを表示。抽出は全体に対して行っています）':text;
-  box.hidden=false;
+  document.getElementById('srcView').value=text;
+  document.getElementById('srcBox').hidden=false;
+  document.getElementById('copySourceBtn').hidden=false;
+  document.getElementById('extractSourceBtn').hidden=false;
 }
 
-async function autoSnapshot(){
+async function autoSnapshot(showErrors=false){
   const raw=document.getElementById('snap').value.trim();
+  updateRawHtmlUrl();
   if(!raw)return;
   const info=parseSnapshot(raw);
   document.getElementById('results').hidden=false;
-  found.clear();render();
-  document.getElementById('srcBox').hidden=true;
-  if(info.error){setStatus(info.error);return;}
-  setStatus('ソースを読み込み中...');
+  if(info.error){if(showErrors)setStatus(info.error);return;}
+  setStatus('元HTMLを取得中...\n取得用URL: '+info.rawHtmlUrl);
+  const btn=document.getElementById('loadSourceBtn');
+  btn.disabled=true;
   try{
-    const r=await fetch('https://web.archive.org/web/'+info.ts+'id_/'+info.orig);
-    if(!r.ok)throw new Error('HTTP '+r.status);
-    lastSource=await r.text();
+    // CORS中継サービスを順番に試す。1つが使えなくても別経路で取得を試みる。
+    const target=info.rawHtmlUrl;
+    const attempts=[
+      {name:'cors.dev', url:'https://proxy.cors.dev/'+target},
+      {name:'corsproxy.io', url:'https://corsproxy.io/?url='+encodeURIComponent(target)},
+      {name:'AllOrigins', url:'https://api.allorigins.win/raw?url='+encodeURIComponent(target)}
+    ];
+    let text='', errors=[];
+    for(const attempt of attempts){
+      try{
+        setStatus('元HTMLを取得中...\n接続先を試しています: '+attempt.name);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(()=>controller.abort(), 20000);
+        let r;
+        try { r=await fetch(attempt.url,{signal:controller.signal,credentials:'omit'}); }
+        finally { clearTimeout(timeoutId); }
+        if(!r.ok) throw new Error('HTTP '+r.status);
+        const candidate=await r.text();
+        if(!candidate || candidate.length<100 || /Wayback Machine - Save Page Now|The Wayback Machine/i.test(candidate.slice(0,500)) && candidate.length<2000){
+          throw new Error('HTML本文ではなくエラーページの可能性');
+        }
+        text=candidate;
+        break;
+      }catch(err){ errors.push(attempt.name+': '+(err.name==='AbortError'?'タイムアウト':err.message||'取得失敗')); }
+    }
+    if(!text) throw new Error(errors.join(' / '));
+    lastSource=text;
     showSource(lastSource);
-    applyExtract('ソースを読み込みました（'+lastSource.length+' 文字）。');
+    setStatus('元HTMLを取得しました（'+lastSource.length+' 文字）。\n「ソースを丸ごとコピー」または「MP3/WAVを抽出」を押してください。');
   }catch(e){
     lastSource='';
-    setStatus('自動取得に失敗しました（保存されていない、またはブラウザの通信制限の可能性があります）。\n下の「ソース貼り付け」を使ってください。\n詳細: '+e.message);
-  }
+    document.getElementById('copySourceBtn').hidden=true;
+    document.getElementById('extractSourceBtn').hidden=true;
+    setStatus('元HTMLを自動取得できませんでした。\n閲覧URLから変換した取得用URLはこちらです。\n'+info.rawHtmlUrl+'\n\n複数の取得経路を試しましたが接続できませんでした。中継サービス側の制限・障害、または通信環境の可能性があります。\n詳細: '+e.message);
+  }finally{btn.disabled=false;}
+}
+
+function extractLoadedSource(){
+  if(!lastSource){setStatus('先に元HTMLを取得してください。');return;}
+  applyExtract('取得したソースから抽出しました。');
 }
 
 function applyExtract(prefix){
@@ -279,10 +353,11 @@ function applyExtract(prefix){
 
 document.getElementById('snap').addEventListener('input',()=>{
   clearTimeout(snapTimer);
-  snapTimer=setTimeout(autoSnapshot,500);
+  updateRawHtmlUrl();
+  // 入力中は変換だけ行い、取得はボタンで実行（スマホで意図せず連続取得しない）
 });
 document.querySelectorAll('input[name=ext]').forEach(r=>r.addEventListener('change',()=>{
-  if(lastSource)applyExtract('検索条件を変更しました。');
+  // 条件を選んでから「抽出」ボタンを押す
 }));
 </script>
 </body>
